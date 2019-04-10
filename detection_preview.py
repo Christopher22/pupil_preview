@@ -115,9 +115,6 @@ class PreviewGenerator:
     def __init__(
         self, url, command_pipe, exception_pipe, frame_per_frames: int, folder: Path
     ):
-        if not folder.is_dir():
-            raise FileNotFoundError("The given folder does not exists.")
-
         self.frame_per_frames = frame_per_frames
         self.folder = folder
 
@@ -128,11 +125,18 @@ class PreviewGenerator:
     @staticmethod
     def generate(params: "PreviewGenerator"):
         try:
+            if not params.folder.is_dir():
+                raise FileNotFoundError("The given folder does not exists.")
+
             # Connect to url and read
             params._status_pipe.send("Connecting to URL '{}'...".format(params._url))
             context = zmq.Context()
             frame_queue = Msg_Receiver(context, params._url, topics=("frame.eye",))
-            params._status_pipe.send("Starting receiving frames...")
+            params._status_pipe.send(
+                "Starting generating previews and saving them in '{}'...".format(
+                    params.folder
+                )
+            )
 
             streams = {}
             while not params._command_pipe.poll():
@@ -157,15 +161,8 @@ class Detection_Preview(Plugin):
     icon_chr = "P"
     order = 0.6
 
-    def __init__(
-        self,
-        g_pool,
-        frames_per_frame: int = 120,
-        folder: str = None,
-    ):
+    def __init__(self, g_pool, frames_per_frame: int = 120, folder: str = "preview"):
         super().__init__(g_pool)
-
-        logging.info(', '.join(g_pool.__dict__.keys()))
 
         self.frames_per_frame = frames_per_frame
         self.folder = folder
@@ -178,10 +175,20 @@ class Detection_Preview(Plugin):
             command_pipe=command_receiver,
             exception_pipe=status_sender,
             frame_per_frames=frames_per_frame,
-            folder=Path(folder),
+            folder=self.folder,
         )
 
-    def recent_events(self, events):
+    @property
+    def folder(self):
+        return self.__folder
+
+    @folder.setter
+    def folder(self, folder):
+        if not isinstance(folder, Path):
+            folder = Path(folder)
+        self.__folder = folder
+
+    def recent_events(self, _events):
         if self.__status_receiver.poll():
             status = self.__status_receiver.recv()
             if isinstance(status, Exception):
@@ -192,12 +199,16 @@ class Detection_Preview(Plugin):
     def on_notify(self, notification):
         subject = notification["subject"]
         if subject == "recording.started" and self.__worker is None:
-            path = notification["rec_path"]
+            path = self.folder
+            if not path.is_absolute() or not path.is_dir():
+                recording_path = Path(notification["rec_path"])
+                path = recording_path / path
+                path.mkdir(parents=True)
+
+            self.__generator.folder = path
             self.__worker = self.__worker = Process(
                 target=PreviewGenerator.generate, args=(self.__generator,), daemon=True
             )
-
-            logging.info("Starting generating previews.")
             self.__worker.start()
 
         elif (
@@ -212,14 +223,14 @@ class Detection_Preview(Plugin):
             self.__worker = None
 
     def get_init_dict(self):
-        return {"frames_per_frame": self.frames_per_frame, "folder": self.folder}
+        return {"frames_per_frame": self.frames_per_frame, "folder": str(self.folder)}
 
     def clone(self):
         return Detection_Preview(**self.get_init_dict())
 
     def init_ui(self):
         self.add_menu()
-        self.menu.label = "Preview of pupil detection."
+        self.menu.label = "Preview of pupil detection"
         self.menu.append(
             ui.Info_Text(
                 "This plugin saves a subset of eye images with their 2D detected ellipses for evaluation purposes."
@@ -232,9 +243,10 @@ class Detection_Preview(Plugin):
                 min=10,
                 step=10,
                 max=10000,
-                label="Amount of frames skipped",
+                label="Frame interval",
             )
         )
+        self.menu.append(ui.Text_Input("folder", self, label="Storage"))
 
     def deinit_ui(self):
         self.remove_menu()
