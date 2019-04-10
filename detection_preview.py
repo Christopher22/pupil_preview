@@ -14,6 +14,9 @@ from pupil_detectors import Detector_2D
 from vis_eye_video_overlay import get_ellipse_points
 
 
+logger = logging.getLogger(__name__)
+
+
 class PreviewGenerator:
     class ImageStream:
         class FrameWrapper:
@@ -112,9 +115,17 @@ class PreviewGenerator:
 
             return False
 
+        def __bool__(self):
+            return self.__counter > 0
+
     def __init__(
         self, url, command_pipe, exception_pipe, frame_per_frames: int, folder: Path
     ):
+        if not folder.is_dir():
+            raise FileNotFoundError(
+                "The given folder '{}' does not exists.".format(folder)
+            )
+
         self.frame_per_frames = frame_per_frames
         self.folder = folder
 
@@ -125,9 +136,6 @@ class PreviewGenerator:
     @staticmethod
     def generate(params: "PreviewGenerator"):
         try:
-            if not params.folder.is_dir():
-                raise FileNotFoundError("The given folder does not exists.")
-
             # Connect to url and read
             params._status_pipe.send("Connecting to URL '{}'...".format(params._url))
             context = zmq.Context()
@@ -167,16 +175,10 @@ class Detection_Preview(Plugin):
         self.frames_per_frame = frames_per_frame
         self.folder = folder
 
-        command_receiver, self.__command_sender = Pipe(False)
-        self.__status_receiver, status_sender = Pipe(False)
+        self.__command_sender = None
         self.__worker = None
-        self.__generator = PreviewGenerator(
-            url=g_pool.ipc_sub_url,
-            command_pipe=command_receiver,
-            exception_pipe=status_sender,
-            frame_per_frames=frames_per_frame,
-            folder=self.folder,
-        )
+        self.__status_receiver = None
+        self.__generator = None
 
     @property
     def folder(self):
@@ -189,12 +191,17 @@ class Detection_Preview(Plugin):
         self.__folder = folder
 
     def recent_events(self, _events):
-        if self.__status_receiver.poll():
-            status = self.__status_receiver.recv()
-            if isinstance(status, Exception):
-                raise status
-            else:
-                logging.info("Image process: {}".format(status))
+        if self.__status_receiver is not None:
+            try:
+                if self.__status_receiver.poll():
+                    status = self.__status_receiver.recv()
+                    if isinstance(status, Exception):
+                        raise status
+                    else:
+                        logger.info("{}".format(status))
+            except BrokenPipeError:
+                self.__status_receiver = None
+                self.__command_sender = None
 
     def on_notify(self, notification):
         subject = notification["subject"]
@@ -205,8 +212,8 @@ class Detection_Preview(Plugin):
                 path = recording_path / path
                 path.mkdir(parents=True)
 
-            self.__generator.folder = path
-            self.__worker = self.__worker = Process(
+            self.__generator = self.__create_generator(path)
+            self.__worker = Process(
                 target=PreviewGenerator.generate, args=(self.__generator,), daemon=True
             )
             self.__worker.start()
@@ -216,11 +223,20 @@ class Detection_Preview(Plugin):
             and self.__worker is not None
             and self.__worker.is_alive()
         ):
-            logging.info("Stopping generating previews.")
             self.__command_sender.send("exit")
             self.__worker.join(3)
             assert self.__worker.exitcode is not None, "Joining failed."
+
+            logger.info("Stopping generation of previews.")
+            if len(list(self.__generator.folder.glob("*.png"))) == 0:
+                logger.warning(
+                    "No previews were generated. Was the Frame Publisher activated?!"
+                )
+
+            # Reset process properties
             self.__worker = None
+            self.__status_receiver = None
+            self.__command_sender = None
 
     def get_init_dict(self):
         return {"frames_per_frame": self.frames_per_frame, "folder": str(self.folder)}
@@ -250,3 +266,15 @@ class Detection_Preview(Plugin):
 
     def deinit_ui(self):
         self.remove_menu()
+
+    def __create_generator(self, folder: Path) -> "PreviewGenerator":
+        command_receiver, self.__command_sender = Pipe(False)
+        self.__status_receiver, status_sender = Pipe(False)
+        self.__worker = None
+        return PreviewGenerator(
+            url=self.g_pool.ipc_sub_url,
+            command_pipe=command_receiver,
+            exception_pipe=status_sender,
+            frame_per_frames=self.frames_per_frame,
+            folder=folder,
+        )
