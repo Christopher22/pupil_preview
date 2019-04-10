@@ -27,7 +27,7 @@ class PreviewGenerator:
                 self.gray = image
                 self.timestamp = 0
 
-        FILE_FORMAT = "eye{}_frame{}_confidence{}.png"
+        FILE_FORMAT = "eye{}_frame{}_confidence{:05.4f}.png"
 
         def __init__(
             self, eye_id: int, frame_per_frames: int, folder: Path, frame_size
@@ -90,7 +90,7 @@ class PreviewGenerator:
                             [np.asarray(ellipse_points, dtype="i")],
                             True,
                             (0, 0, 255),
-                            thickness=1,
+                            thickness=2,
                         )
 
                     # Write the visualization as an image
