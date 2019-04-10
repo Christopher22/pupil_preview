@@ -6,13 +6,19 @@ import zmq
 import cv2
 import numpy as np
 from pyglui import ui
+import glfw
 
 from plugin import Plugin
 from methods import Roi
 from zmq_tools import Msg_Receiver
 from pupil_detectors import Detector_2D
 from vis_eye_video_overlay import get_ellipse_points
-
+from pyglui.cygl.utils import draw_gl_texture
+from gl_utils import (
+    clear_gl_screen,
+    basic_gl_setup,
+    make_coord_system_norm_based
+)
 
 logger = logging.getLogger(__name__)
 
@@ -165,6 +171,128 @@ class PreviewGenerator:
             params._status_pipe.send(e)
 
 
+class PreviewWindow:
+    class WindowContextManager:
+        def __init__(self, next_handle=None):
+            self.__next_handle = next_handle
+            self.__old_handle = None
+
+        def __enter__(self):
+            self.__old_handle = glfw.glfwGetCurrentContext()
+            if self.__next_handle is not None:
+                glfw.glfwMakeContextCurrent(self.__next_handle)
+            return self.__old_handle
+
+        def __exit__(self, exc_type, exc_val, exc_tb):
+            if exc_type is not None:
+                return
+
+            glfw.glfwMakeContextCurrent(self.__old_handle)
+
+    WINDOW_NAME = "Detection Preview"
+
+    def __init__(self, path: Path):
+        self.path = path
+        self.__window = None
+
+    def __bool__(self):
+        return self.__window is not None
+
+    def show(self):
+        if self.__window is not None:
+            raise RuntimeError("Window is already shown.")
+
+        eye0_data = tuple(self.path.glob("eye0_*.png"))
+        if len(eye0_data) == 0:
+            return
+
+        frame_index = 0
+
+        def on_key(window, key, _scancode, action, _mods):
+            nonlocal frame_index
+
+            # Respond only to key press
+            if action != glfw.GLFW_PRESS:
+                return
+
+            if key == glfw.GLFW_KEY_LEFT and frame_index > 0:
+                frame_index -= 1
+                PreviewWindow._draw_frame(window, eye0_data, frame_index)
+            elif key == glfw.GLFW_KEY_RIGHT and frame_index < len(eye0_data) - 1:
+                frame_index += 1
+            else:
+                return
+
+            PreviewWindow._draw_frame(window, eye0_data, frame_index)
+
+        first_frame = cv2.imread(str(eye0_data[0]))
+        with PreviewWindow.WindowContextManager() as active_window:
+            glfw.glfwWindowHint(glfw.GLFW_RESIZABLE, False)
+            glfw.glfwWindowHint(glfw.GLFW_ICONIFIED, False)
+
+            self.__window = glfw.glfwCreateWindow(
+                first_frame.shape[1],
+                first_frame.shape[0],
+                PreviewWindow.WINDOW_NAME,
+                monitor=None,
+                share=active_window,
+            )
+
+            # Reset default
+            glfw.glfwWindowHint(glfw.GLFW_RESIZABLE, True)
+            glfw.glfwWindowHint(glfw.GLFW_ICONIFIED, True)
+
+            glfw.glfwSetKeyCallback(self.__window, on_key)
+            glfw.glfwMakeContextCurrent(self.__window)
+            basic_gl_setup()
+            glfw.glfwSwapInterval(0)
+
+        PreviewWindow._draw_frame(self.__window, eye0_data, 0)
+
+    def close(self):
+        if self.__window is None:
+            raise RuntimeError("Window is already closed.")
+
+        with PreviewWindow.WindowContextManager():
+            glfw.glfwDestroyWindow(self.__window)
+            self.__window = None
+
+    @staticmethod
+    def _draw_frame(window, files, index):
+        file = files[index]
+        eye_id, frame_id, confidence = file.stem.split("_")
+
+        frame = cv2.imread(str(file))
+        PreviewWindow._draw_text(
+            frame,
+            "Preview {}/{} ({})".format(index + 1, len(files), eye_id),
+            (20, frame.shape[0] - 60),
+        )
+        PreviewWindow._draw_text(
+            frame, "Confidence: {}".format(confidence[-6:]), (20, frame.shape[0] - 30)
+        )
+
+        with PreviewWindow.WindowContextManager(window):
+            clear_gl_screen()
+            make_coord_system_norm_based()
+            draw_gl_texture(frame, interpolation=False)
+            glfw.glfwSwapBuffers(window)
+
+    @staticmethod
+    def _draw_text(frame, string, position):
+        cv2.putText(
+            frame,
+            string,
+            position,
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.65,
+            (157, 233, 68),
+            2,
+            cv2.LINE_AA,
+            False,
+        )
+
+
 class Detection_Preview(Plugin):
     icon_chr = "P"
     order = 0.6
@@ -232,6 +360,9 @@ class Detection_Preview(Plugin):
                 logger.warning(
                     "No previews were generated. Was the Frame Publisher activated?!"
                 )
+            else:
+                # Show frames in other thread
+                PreviewWindow(self.__generator.folder).show()
 
             # Reset process properties
             self.__worker = None
