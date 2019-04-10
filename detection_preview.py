@@ -14,11 +14,7 @@ from zmq_tools import Msg_Receiver
 from pupil_detectors import Detector_2D
 from vis_eye_video_overlay import get_ellipse_points
 from pyglui.cygl.utils import draw_gl_texture
-from gl_utils import (
-    clear_gl_screen,
-    basic_gl_setup,
-    make_coord_system_norm_based
-)
+from gl_utils import clear_gl_screen, basic_gl_setup, make_coord_system_norm_based
 
 logger = logging.getLogger(__name__)
 
@@ -294,19 +290,30 @@ class PreviewWindow:
 
 
 class Detection_Preview(Plugin):
+    NOTIFICATION_PREVIEW_SHOW = "preview.show"
+    NOTIFICATION_PREVIEW_CLOSE = "preview.close"
+
     icon_chr = "P"
     order = 0.6
 
-    def __init__(self, g_pool, frames_per_frame: int = 120, folder: str = "preview"):
+    def __init__(
+        self,
+        g_pool,
+        frames_per_frame: int = 120,
+        folder: str = "preview",
+        should_show: bool = True,
+    ):
         super().__init__(g_pool)
 
         self.frames_per_frame = frames_per_frame
         self.folder = folder
+        self.should_show = should_show
 
         self.__command_sender = None
         self.__worker = None
         self.__status_receiver = None
         self.__generator = None
+        self.__window = None
 
     @property
     def folder(self):
@@ -360,17 +367,38 @@ class Detection_Preview(Plugin):
                 logger.warning(
                     "No previews were generated. Was the Frame Publisher activated?!"
                 )
-            else:
-                # Show frames in other thread
-                PreviewWindow(self.__generator.folder).show()
+            elif self.should_show:
+                self.notify_all(
+                    {"subject": Detection_Preview.NOTIFICATION_PREVIEW_SHOW}
+                )
 
             # Reset process properties
             self.__worker = None
             self.__status_receiver = None
             self.__command_sender = None
 
+        elif (
+            subject == Detection_Preview.NOTIFICATION_PREVIEW_SHOW
+            and self.__generator is not None
+            and self.__window is None
+        ):
+            self.__window = PreviewWindow(self.__generator.folder)
+            self.__window.show()
+
+        elif (
+            subject == Detection_Preview.NOTIFICATION_PREVIEW_CLOSE
+            and self.__window is not None
+            and bool(self.__window)
+        ):
+            self.__window.close()
+            self.__window = None
+
     def get_init_dict(self):
-        return {"frames_per_frame": self.frames_per_frame, "folder": str(self.folder)}
+        return {
+            "frames_per_frame": self.frames_per_frame,
+            "folder": str(self.folder),
+            "should_show": self.should_show,
+        }
 
     def clone(self):
         return Detection_Preview(**self.get_init_dict())
@@ -394,6 +422,9 @@ class Detection_Preview(Plugin):
             )
         )
         self.menu.append(ui.Text_Input("folder", self, label="Storage"))
+        self.menu.append(
+            ui.Switch("should_show", self, label="Show preview after recording")
+        )
 
     def deinit_ui(self):
         self.remove_menu()
