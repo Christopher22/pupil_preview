@@ -1,6 +1,8 @@
 import logging
 from multiprocessing import Process, Pipe
 from pathlib import Path
+from collections import defaultdict
+import re
 
 import zmq
 import cv2
@@ -19,6 +21,79 @@ from gl_utils import clear_gl_screen, basic_gl_setup, make_coord_system_norm_bas
 logger = logging.getLogger(__name__)
 
 
+class PreviewFrame:
+    """
+    The meta data of a frame extracted as a preview.
+    """
+
+    FILE_FORMAT = "eye{}_frame{}_confidence{:05.4f}.png"
+
+    def __init__(self, eye_id: int, frame_num: int, confidence: float):
+        """
+        Creates a new preview.
+        :param eye_id: The ID of the eye.
+        :param frame_num: The number of frames.
+        :param confidence: The confidence of the 2D detection.
+        """
+        self.eye_id = eye_id
+        self.frame_num = frame_num
+        self.confidence = confidence
+
+    def __str__(self):
+        return PreviewFrame.FILE_FORMAT.format(
+            self.eye_id, self.frame_num, self.confidence
+        )
+
+    def save(self, folder: Path, data: np.ndarray) -> None:
+        """
+        Write a given image into the file system and save the meta data beside it.
+        :param folder: The folder for storing the images.
+        :param data: The image itself.
+        """
+        cv2.imwrite(str(folder / str(self)), data)
+
+    def load(self, folder: Path) -> np.ndarray:
+        """
+        Load the corresponding image from the file system given the meta data.
+        :param path: The folder for storing the images.
+        :return: The loaded color image.
+        """
+        return cv2.imread(str(Path(folder, str(self))))
+
+    @staticmethod
+    def load_all(folder: Path) -> "Sequence[Sequence[PreviewFrame]]":
+        """
+        Load all available image meta data from a folder.
+        :param folder: The folder for storing the images.
+        :return: A sequence of sequences containing the frames.
+        """
+        formatting_pattern = re.compile(r"{.*?}")
+        file_pattern = formatting_pattern.sub(repl="*", string=PreviewFrame.FILE_FORMAT)
+        info_extractor = re.compile(
+            formatting_pattern.sub(repl="([0-9\.]+)", string=PreviewFrame.FILE_FORMAT)
+        )
+
+        # Read all available paths and sort them by eye id
+        collections = defaultdict(list)
+        for file in folder.glob(file_pattern):
+            match = info_extractor.fullmatch(file.name)
+            if match is None:
+                continue
+
+            frame = PreviewFrame(
+                eye_id=int(match.group(1)),
+                frame_num=int(match.group(2)),
+                confidence=float(match.group(3)),
+            )
+            collections[frame.eye_id].append(frame)
+
+        # Sort collections by the frame number
+        for collection in collections.values():
+            collection.sort(key=lambda x: x.frame_num)
+
+        return tuple(zip(*tuple(collections.values())))
+
+
 class PreviewGenerator:
     class ImageStream:
         class FrameWrapper:
@@ -31,8 +106,6 @@ class PreviewGenerator:
                 self.height = image.shape[0]
                 self.gray = image
                 self.timestamp = 0
-
-        FILE_FORMAT = "eye{}_frame{}_confidence{:05.4f}.png"
 
         def __init__(
             self, eye_id: int, frame_per_frames: int, folder: Path, frame_size
@@ -98,17 +171,10 @@ class PreviewGenerator:
                             thickness=2,
                         )
 
-                    # Write the visualization as an image
-                    cv2.imwrite(
-                        str(
-                            self.folder
-                            / PreviewGenerator.ImageStream.FILE_FORMAT.format(
-                                self.eye_id, self.__counter, confidence
-                            )
-                        ),
-                        color_frame,
+                    frame = PreviewFrame(
+                        self.eye_id, self.__counter, pupil_2d["confidence"]
                     )
-
+                    frame.save(self.folder, color_frame)
                     return True
                 else:
                     raise RuntimeWarning(
@@ -199,8 +265,8 @@ class PreviewWindow:
         if self.__window is not None:
             raise RuntimeError("Window is already shown.")
 
-        eye0_data = tuple(self.path.glob("eye0_*.png"))
-        if len(eye0_data) == 0:
+        frames = PreviewFrame.load_all(self.path)
+        if len(frames) == 0:
             return
 
         frame_index = 0
@@ -214,23 +280,24 @@ class PreviewWindow:
 
             if key == glfw.GLFW_KEY_LEFT and frame_index > 0:
                 frame_index -= 1
-                PreviewWindow._draw_frame(window, eye0_data, frame_index)
-            elif key == glfw.GLFW_KEY_RIGHT and frame_index < len(eye0_data) - 1:
+                PreviewWindow._draw_frame(window, self.path, frames, frame_index)
+            elif key == glfw.GLFW_KEY_RIGHT and frame_index < len(frames) - 1:
                 frame_index += 1
-                PreviewWindow._draw_frame(window, eye0_data, frame_index)
+                PreviewWindow._draw_frame(window, self.path, frames, frame_index)
 
         def on_close(_window):
             self.parent.notify_all(
                 {"subject": Detection_Preview.NOTIFICATION_PREVIEW_CLOSE}
             )
 
-        first_frame = cv2.imread(str(eye0_data[0]))
+        # TODO: The code assumes for simplicity that both eye images run with the same resolution.
+        first_frame = frames[0][0].load(self.path)
         with PreviewWindow.WindowContextManager() as active_window:
             glfw.glfwWindowHint(glfw.GLFW_RESIZABLE, False)
             glfw.glfwWindowHint(glfw.GLFW_ICONIFIED, False)
 
             self.__window = glfw.glfwCreateWindow(
-                first_frame.shape[1],
+                first_frame.shape[1] * len(frames[0]),
                 first_frame.shape[0],
                 PreviewWindow.WINDOW_NAME,
                 monitor=None,
@@ -247,7 +314,7 @@ class PreviewWindow:
             basic_gl_setup()
             glfw.glfwSwapInterval(0)
 
-        PreviewWindow._draw_frame(self.__window, eye0_data, 0)
+        PreviewWindow._draw_frame(self.__window, self.path, frames, 0)
 
     def close(self):
         if self.__window is None:
@@ -258,20 +325,24 @@ class PreviewWindow:
             self.__window = None
 
     @staticmethod
-    def _draw_frame(window, files, index):
-        file = files[index]
-        eye_id, frame_id, confidence = file.stem.split("_")
+    def _draw_frame(window, path, frames, index):
+        frames_data = [frame.load(path) for frame in frames[index]]
 
-        frame = cv2.imread(str(file))
-        PreviewWindow._draw_text(
-            frame,
-            "Preview {}/{} ({})".format(index + 1, len(files), eye_id),
-            (20, frame.shape[0] - 60),
-        )
-        PreviewWindow._draw_text(
-            frame, "Confidence: {}".format(confidence[-6:]), (20, frame.shape[0] - 30)
-        )
+        for frame, frame_meta in zip(frames_data, frames[index]):
+            PreviewWindow._draw_text(
+                frame,
+                "Preview {}/{} (eye{})".format(
+                    index + 1, len(frames), frame_meta.eye_id
+                ),
+                (20, frame.shape[0] - 60),
+            )
+            PreviewWindow._draw_text(
+                frame,
+                "Confidence: {}".format(frame_meta.confidence),
+                (20, frame.shape[0] - 30),
+            )
 
+        frame = frames_data[0] if len(frames_data) == 1 else np.hstack(frames_data)
         with PreviewWindow.WindowContextManager(window):
             clear_gl_screen()
             make_coord_system_norm_based()
