@@ -187,8 +187,9 @@ class PreviewWindow:
 
     WINDOW_NAME = "Detection Preview"
 
-    def __init__(self, path: Path):
+    def __init__(self, parent: Plugin, path: Path):
         self.path = path
+        self.parent = parent
         self.__window = None
 
     def __bool__(self):
@@ -216,10 +217,12 @@ class PreviewWindow:
                 PreviewWindow._draw_frame(window, eye0_data, frame_index)
             elif key == glfw.GLFW_KEY_RIGHT and frame_index < len(eye0_data) - 1:
                 frame_index += 1
-            else:
-                return
+                PreviewWindow._draw_frame(window, eye0_data, frame_index)
 
-            PreviewWindow._draw_frame(window, eye0_data, frame_index)
+        def on_close(_window):
+            self.parent.notify_all(
+                {"subject": Detection_Preview.NOTIFICATION_PREVIEW_CLOSE}
+            )
 
         first_frame = cv2.imread(str(eye0_data[0]))
         with PreviewWindow.WindowContextManager() as active_window:
@@ -239,6 +242,7 @@ class PreviewWindow:
             glfw.glfwWindowHint(glfw.GLFW_ICONIFIED, True)
 
             glfw.glfwSetKeyCallback(self.__window, on_key)
+            glfw.glfwSetWindowCloseCallback(self.__window, on_close)
             glfw.glfwMakeContextCurrent(self.__window)
             basic_gl_setup()
             glfw.glfwSwapInterval(0)
@@ -382,7 +386,7 @@ class Detection_Preview(Plugin):
             and self.__generator is not None
             and self.__window is None
         ):
-            self.__window = PreviewWindow(self.__generator.folder)
+            self.__window = PreviewWindow(self, self.__generator.folder)
             self.__window.show()
 
         elif (
