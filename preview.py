@@ -116,7 +116,7 @@ class PreviewGenerator:
             self.eye_id = eye_id
 
             self.__counter = 0
-            self.__detector = Detector_2D()
+            self.__detector = Detector_2D(settings={"pupil_size_min":40, "pupil_size_max":200, "coarse_detection":False})
 
         def add(self, payload) -> bool:
             self.__counter += 1
