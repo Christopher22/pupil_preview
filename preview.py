@@ -235,6 +235,10 @@ class PreviewGenerator:
 
 class PreviewWindow:
     class WindowContextManager:
+        """
+        A context manager for dealing with different window contexts.
+        """
+
         def __init__(self, next_handle=None):
             self.__next_handle = next_handle
             self.__old_handle = None
@@ -286,9 +290,7 @@ class PreviewWindow:
                 PreviewWindow._draw_frame(window, self.path, frames, frame_index)
 
         def on_close(_window):
-            self.parent.notify_all(
-                {"subject": Detection_Preview.NOTIFICATION_PREVIEW_CLOSE}
-            )
+            self.parent.notify_all({"subject": Preview.NOTIFICATION_PREVIEW_CLOSE})
 
         # TODO: The code assumes for simplicity that both eye images run with the same resolution.
         first_frame = frames[0][0].load(self.path)
@@ -364,7 +366,7 @@ class PreviewWindow:
         )
 
 
-class Detection_Preview(Plugin):
+class Preview(Plugin):
     NOTIFICATION_PREVIEW_SHOW = "preview.show"
     NOTIFICATION_PREVIEW_CLOSE = "preview.close"
 
@@ -443,9 +445,7 @@ class Detection_Preview(Plugin):
                     "No previews were generated. Was the Frame Publisher activated?!"
                 )
             elif self.should_show:
-                self.notify_all(
-                    {"subject": Detection_Preview.NOTIFICATION_PREVIEW_SHOW}
-                )
+                self.notify_all({"subject": Preview.NOTIFICATION_PREVIEW_SHOW})
 
             # Reset process properties
             self.__worker = None
@@ -453,7 +453,7 @@ class Detection_Preview(Plugin):
             self.__command_sender = None
 
         elif (
-            subject == Detection_Preview.NOTIFICATION_PREVIEW_SHOW
+            subject == Preview.NOTIFICATION_PREVIEW_SHOW
             and self.__generator is not None
             and self.__window is None
         ):
@@ -461,7 +461,7 @@ class Detection_Preview(Plugin):
             self.__window.show()
 
         elif (
-            subject == Detection_Preview.NOTIFICATION_PREVIEW_CLOSE
+            subject == Preview.NOTIFICATION_PREVIEW_CLOSE
             and self.__window is not None
             and bool(self.__window)
         ):
@@ -476,7 +476,7 @@ class Detection_Preview(Plugin):
         }
 
     def clone(self):
-        return Detection_Preview(**self.get_init_dict())
+        return Preview(**self.get_init_dict())
 
     def init_ui(self):
         self.add_menu()
