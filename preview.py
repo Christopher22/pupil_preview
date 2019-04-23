@@ -19,7 +19,7 @@ from vis_eye_video_overlay import get_ellipse_points
 from pyglui.cygl.utils import draw_gl_texture
 from gl_utils import clear_gl_screen, basic_gl_setup, make_coord_system_norm_based
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("preview")
 
 
 class PreviewFrame:
@@ -107,7 +107,6 @@ class PreviewFrame:
         # Read all available paths and sort them by eye id
         collections = defaultdict(list)
         for file in folder.glob(file_pattern):
-            logging.warning(file.name)
             match = info_extractor.fullmatch(file.name)
             if match is None:
                 continue
@@ -321,7 +320,7 @@ class PreviewWindow:
 
         frames = PreviewFrame.load_all(self.path)
         if len(frames) == 0:
-            logging.warning(
+            logger.warning(
                 "No frames where found. Therefore, the preview is not shown."
             )
             return
@@ -509,7 +508,6 @@ class Preview(Plugin):
             assert self.__worker.exitcode is not None, "Joining failed."
 
             logger.info("Stopping generation of previews.")
-
             rough_frame_pattern = "*.{}".format(self.__frame_format)
             if len(list(self.__generator.folder.glob(rough_frame_pattern))) == 0:
                 logger.warning(
