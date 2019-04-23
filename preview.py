@@ -168,7 +168,7 @@ class PreviewGenerator:
         def add(self, payload) -> bool:
             self.__counter += 1
             if self.__counter % self.frame_per_frames == 0:
-                if payload["format"] not in ("gray", "bgr"):
+                if payload["format"] not in ("gray", "bgr", "jpeg"):
                     raise NotImplementedError(
                         "The eye frame format '{}' is currently not supported!".format(
                             payload["format"]
@@ -176,12 +176,21 @@ class PreviewGenerator:
                     )
 
                 shape = [self.frame_size[1], self.frame_size[0]]
-                if payload["format"] == "bgr":
+                if payload["format"] != "gray":
                     shape.append(3)
 
-                data = payload["__raw_data__"][-1]
-                if len(data) == np.prod(shape):
-                    raw_frame = np.frombuffer(data, dtype=np.uint8).reshape(shape)
+                data = np.frombuffer(payload["__raw_data__"][-1], dtype=np.uint8)
+                if len(data) == np.prod(shape) or payload["format"] == "jpeg":
+                    raw_frame = (
+                        cv2.imdecode(data, cv2.IMREAD_COLOR)
+                        if payload["format"] == "jpeg"
+                        else data.reshape(shape)
+                    )
+
+                    # Pupil/OpenCV seems to tamper the underlying data. Better copy it.
+                    if payload["format"] == "gray":
+                        raw_frame = raw_frame.copy()
+
                     grayscale_frame = (
                         raw_frame
                         if len(shape) == 2
