@@ -4,6 +4,7 @@ from pathlib import Path
 from collections import defaultdict
 import re
 from enum import Enum
+import json
 
 import zmq
 import cv2
@@ -146,6 +147,7 @@ class PreviewGenerator:
             folder: Path,
             frame_size,
             frame_format: PreviewFrame.Format,
+            detector_parameters: "Mapping[str, Any]",
         ):
             self.frame_per_frames = frame_per_frames
             self.folder = folder
@@ -155,6 +157,13 @@ class PreviewGenerator:
 
             self.__counter = 0
             self.__detector = Detector_2D()
+
+            # Set custom parameter for the Detector2d, if given
+            if len(detector_parameters) > 0:
+                # Update settings even if 'set_2d_detector_property' is not available
+                settings = self.__detector.get_settings()
+                settings.update(detector_parameters)
+                self.__detector = Detector_2D(settings=settings)
 
         def add(self, payload) -> bool:
             self.__counter += 1
@@ -235,6 +244,7 @@ class PreviewGenerator:
         frame_per_frames: int,
         folder: Path,
         frame_format: PreviewFrame.Format,
+        detector_parameters: "Mapping[str, Any]",
     ):
         if not folder.is_dir():
             raise FileNotFoundError(
@@ -244,6 +254,7 @@ class PreviewGenerator:
         self.frame_per_frames = frame_per_frames
         self.folder = folder
         self.frame_format = frame_format
+        self.detector_parameters = detector_parameters
 
         self._url = url
         self._command_pipe = command_pipe
@@ -274,6 +285,7 @@ class PreviewGenerator:
                             folder=params.folder,
                             frame_size=(payload["width"], payload["height"]),
                             frame_format=params.frame_format,
+                            detector_parameters=params.detector_parameters,
                         )
                     streams[id].add(payload)
 
@@ -422,6 +434,8 @@ class Preview(Plugin):
     NOTIFICATION_PREVIEW_SHOW = "preview.show"
     NOTIFICATION_PREVIEW_CLOSE = "preview.close"
 
+    DETECTOR_CONFIG = "user_settings_preview.json"
+
     icon_chr = "P"
     order = 0.6
 
@@ -431,7 +445,7 @@ class Preview(Plugin):
         frames_per_frame: int = 120,
         folder: str = "preview",
         should_show: bool = True,
-        frame_format=PreviewFrame.Format.JPEG,
+        frame_format: "Union[str, PreviewFrame.Format.JPEG]" = PreviewFrame.Format.JPEG,
     ):
         super().__init__(g_pool)
 
@@ -582,6 +596,19 @@ class Preview(Plugin):
     def deinit_ui(self):
         self.remove_menu()
 
+    def _get_detector_parameters(self) -> "Mapping[str, Any]":
+        config_file = Path(self.g_pool.user_dir, Preview.DETECTOR_CONFIG)
+        if config_file.is_file():
+            logger.info(
+                "Loading detector parameters for preview from '%s'.", config_file
+            )
+            with config_file.open("r") as file:
+                parameters = json.load(file)
+        else:
+            parameters = {}
+
+        return parameters
+
     def __create_generator(self, folder: Path) -> "PreviewGenerator":
         command_receiver, self.__command_sender = Pipe(False)
         self.__status_receiver, status_sender = Pipe(False)
@@ -593,4 +620,5 @@ class Preview(Plugin):
             frame_per_frames=self.frames_per_frame,
             folder=folder,
             frame_format=self.__frame_format,
+            detector_parameters=self._get_detector_parameters(),
         )
