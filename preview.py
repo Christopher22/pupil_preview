@@ -3,6 +3,7 @@ from multiprocessing import Process, Pipe
 from pathlib import Path
 from collections import defaultdict
 import re
+from enum import Enum
 
 import zmq
 import cv2
@@ -22,13 +23,40 @@ logger = logging.getLogger(__name__)
 
 
 class PreviewFrame:
+    class Format(Enum):
+        JPEG = "jpg"
+        PNG = "png"
+        BMP = "bmp"
+
+        def __str__(self) -> str:
+            return self.value
+
+        @staticmethod
+        def from_path(path: Path) -> "PreviewFrame.Format":
+            return PreviewFrame.Format.from_extension(path.suffix[1:])
+
+        @staticmethod
+        def from_extension(extension: str) -> "PreviewFrame.Format":
+            try:
+                return next(
+                    format for format in PreviewFrame.Format if str(format) == extension
+                )
+            except StopIteration:
+                raise ValueError("Unknown extension '{}'".format(extension))
+
     """
     The meta data of a frame extracted as a preview.
     """
 
-    FILE_FORMAT = "eye{}_frame{}_confidence{:05.4f}.png"
+    FILE_FORMAT = "eye{}_frame{}_confidence{:05.4f}.{}"
 
-    def __init__(self, eye_id: int, frame_num: int, confidence: float):
+    def __init__(
+        self,
+        eye_id: int,
+        frame_num: int,
+        confidence: float,
+        frame_format: "PreviewFrame.Format",
+    ):
         """
         Creates a new preview.
         :param eye_id: The ID of the eye.
@@ -38,10 +66,11 @@ class PreviewFrame:
         self.eye_id = eye_id
         self.frame_num = frame_num
         self.confidence = confidence
+        self.format = frame_format
 
     def __str__(self):
         return PreviewFrame.FILE_FORMAT.format(
-            self.eye_id, self.frame_num, self.confidence
+            self.eye_id, self.frame_num, self.confidence, self.format
         )
 
     def save(self, folder: Path, data: np.ndarray) -> None:
@@ -70,12 +99,15 @@ class PreviewFrame:
         formatting_pattern = re.compile(r"{.*?}")
         file_pattern = formatting_pattern.sub(repl="*", string=PreviewFrame.FILE_FORMAT)
         info_extractor = re.compile(
-            formatting_pattern.sub(repl="([0-9\.]+)", string=PreviewFrame.FILE_FORMAT)
+            formatting_pattern.sub(
+                repl="([0-9]+(?:\.[0-9]+)?|[a-z]+)", string=PreviewFrame.FILE_FORMAT
+            )
         )
 
         # Read all available paths and sort them by eye id
         collections = defaultdict(list)
         for file in folder.glob(file_pattern):
+            logging.warning(file.name)
             match = info_extractor.fullmatch(file.name)
             if match is None:
                 continue
@@ -84,6 +116,7 @@ class PreviewFrame:
                 eye_id=int(match.group(1)),
                 frame_num=int(match.group(2)),
                 confidence=float(match.group(3)),
+                frame_format=PreviewFrame.Format.from_extension(match.group(4)),
             )
             collections[frame.eye_id].append(frame)
 
@@ -108,12 +141,18 @@ class PreviewGenerator:
                 self.timestamp = 0
 
         def __init__(
-            self, eye_id: int, frame_per_frames: int, folder: Path, frame_size
+            self,
+            eye_id: int,
+            frame_per_frames: int,
+            folder: Path,
+            frame_size,
+            frame_format: PreviewFrame.Format,
         ):
             self.frame_per_frames = frame_per_frames
             self.folder = folder
             self.frame_size = frame_size
             self.eye_id = eye_id
+            self.frame_format = frame_format
 
             self.__counter = 0
             self.__detector = Detector_2D()
@@ -172,7 +211,10 @@ class PreviewGenerator:
                         )
 
                     frame = PreviewFrame(
-                        self.eye_id, self.__counter, pupil_2d["confidence"]
+                        self.eye_id,
+                        self.__counter,
+                        pupil_2d["confidence"],
+                        self.frame_format,
                     )
                     frame.save(self.folder, color_frame)
                     return True
@@ -187,7 +229,13 @@ class PreviewGenerator:
             return self.__counter > 0
 
     def __init__(
-        self, url, command_pipe, exception_pipe, frame_per_frames: int, folder: Path
+        self,
+        url,
+        command_pipe,
+        exception_pipe,
+        frame_per_frames: int,
+        folder: Path,
+        frame_format: PreviewFrame.Format,
     ):
         if not folder.is_dir():
             raise FileNotFoundError(
@@ -196,6 +244,7 @@ class PreviewGenerator:
 
         self.frame_per_frames = frame_per_frames
         self.folder = folder
+        self.frame_format = frame_format
 
         self._url = url
         self._command_pipe = command_pipe
@@ -225,6 +274,7 @@ class PreviewGenerator:
                             frame_per_frames=params.frame_per_frames,
                             folder=params.folder,
                             frame_size=(payload["width"], payload["height"]),
+                            frame_format=params.frame_format,
                         )
                     streams[id].add(payload)
 
@@ -271,6 +321,9 @@ class PreviewWindow:
 
         frames = PreviewFrame.load_all(self.path)
         if len(frames) == 0:
+            logging.warning(
+                "No frames where found. Therefore, the preview is not shown."
+            )
             return
 
         frame_index = 0
@@ -379,18 +432,34 @@ class Preview(Plugin):
         frames_per_frame: int = 120,
         folder: str = "preview",
         should_show: bool = True,
+        frame_format=PreviewFrame.Format.JPEG,
     ):
         super().__init__(g_pool)
-
-        self.frames_per_frame = frames_per_frame
-        self.folder = folder
-        self.should_show = should_show
 
         self.__command_sender = None
         self.__worker = None
         self.__status_receiver = None
         self.__generator = None
         self.__window = None
+        self.__frame_format: PreviewFrame.Format = None
+
+        self.frames_per_frame = frames_per_frame
+        self.folder = folder
+        self.should_show = should_show
+        self.frame_format = frame_format
+
+    @property
+    def frame_format(self):
+        return self.__frame_format.name
+
+    @frame_format.setter
+    def frame_format(self, value):
+        value = (
+            value
+            if isinstance(value, PreviewFrame.Format)
+            else PreviewFrame.Format[value]
+        )
+        self.__frame_format = value
 
     @property
     def folder(self):
@@ -440,7 +509,9 @@ class Preview(Plugin):
             assert self.__worker.exitcode is not None, "Joining failed."
 
             logger.info("Stopping generation of previews.")
-            if len(list(self.__generator.folder.glob("*.png"))) == 0:
+
+            rough_frame_pattern = "*.{}".format(self.__frame_format)
+            if len(list(self.__generator.folder.glob(rough_frame_pattern))) == 0:
                 logger.warning(
                     "No previews were generated. Was the Frame Publisher activated?!"
                 )
@@ -473,6 +544,7 @@ class Preview(Plugin):
             "frames_per_frame": self.frames_per_frame,
             "folder": str(self.folder),
             "should_show": self.should_show,
+            "frame_format": self.frame_format,
         }
 
     def clone(self):
@@ -498,6 +570,14 @@ class Preview(Plugin):
         )
         self.menu.append(ui.Text_Input("folder", self, label="Storage"))
         self.menu.append(
+            ui.Selector(
+                "frame_format",
+                self,
+                selection=tuple(PreviewFrame.Format.__members__.keys()),
+                label="Image format",
+            )
+        )
+        self.menu.append(
             ui.Switch("should_show", self, label="Show preview after recording")
         )
 
@@ -514,4 +594,5 @@ class Preview(Plugin):
             exception_pipe=status_sender,
             frame_per_frames=self.frames_per_frame,
             folder=folder,
+            frame_format=self.__frame_format,
         )
