@@ -611,8 +611,14 @@ class Preview(Plugin):
             logger.info(
                 "Loading detector parameters for preview from '%s'.", config_file
             )
-            with config_file.open("r") as file:
-                parameters = json.load(file)
+            with config_file.open("r", encoding="utf-8-sig") as file:
+                try:
+                    parameters = json.load(file)
+                except json.JSONDecodeError:
+                    logger.error(
+                        "Unable to load the detector parameters due to invalid JSON. Using default."
+                    )
+                    parameters = {}
         else:
             parameters = {}
 
