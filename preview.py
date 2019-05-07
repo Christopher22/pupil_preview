@@ -432,7 +432,7 @@ class PreviewWindow:
 
         frame = frames_data[0] if len(frames_data) == 1 else np.hstack(frames_data)
 
-        # Present usage hints of first load
+        # Present usage hints at first load
         if show_help:
             PreviewWindow._draw_text(
                 frame,
@@ -473,7 +473,7 @@ class Preview(Plugin):
     def __init__(
         self,
         g_pool,
-        frames_per_frame: int = 120,
+        frames_per_frame: int = 1200,
         folder: str = "preview",
         should_show: bool = True,
         frame_format: "Union[str, PreviewFrame.Format.JPEG]" = PreviewFrame.Format.JPEG,
