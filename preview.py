@@ -22,9 +22,20 @@ from gl_utils import clear_gl_screen, basic_gl_setup, make_coord_system_norm_bas
 
 logger = logging.getLogger("preview")
 
+# For some reason not exported in GLFW
+GLFW_FLOATING = 131079
+
 
 class PreviewFrame:
+    """
+    The meta data of a frame extracted as a preview.
+    """
+
     class Format(Enum):
+        """
+        The image format of the exported frame.
+        """
+
         JPEG = "jpg"
         PNG = "png"
         BMP = "bmp"
@@ -44,10 +55,6 @@ class PreviewFrame:
                 )
             except StopIteration:
                 raise ValueError("Unknown extension '{}'".format(extension))
-
-    """
-    The meta data of a frame extracted as a preview.
-    """
 
     FILE_FORMAT = "eye{}_frame{}_confidence{:05.4f}.{}"
 
@@ -98,7 +105,11 @@ class PreviewFrame:
         :return: A sequence of sequences containing the frames.
         """
         formatting_pattern = re.compile(r"{.*?}")
+
+        # Create a glob-compatible pattern
         file_pattern = formatting_pattern.sub(repl="*", string=PreviewFrame.FILE_FORMAT)
+
+        # Create a extractor for the informarion supporting both (floating) number and strings.
         info_extractor = re.compile(
             formatting_pattern.sub(
                 repl="([0-9]+(?:\.[0-9]+)?|[a-z]+)", string=PreviewFrame.FILE_FORMAT
@@ -370,6 +381,7 @@ class PreviewWindow:
         with PreviewWindow.WindowContextManager() as active_window:
             glfw.glfwWindowHint(glfw.GLFW_RESIZABLE, False)
             glfw.glfwWindowHint(glfw.GLFW_ICONIFIED, False)
+            glfw.glfwWindowHint(GLFW_FLOATING, True)
 
             self.__window = glfw.glfwCreateWindow(
                 first_frame.shape[1] * len(frames[0]),
@@ -382,6 +394,7 @@ class PreviewWindow:
             # Reset default
             glfw.glfwWindowHint(glfw.GLFW_RESIZABLE, True)
             glfw.glfwWindowHint(glfw.GLFW_ICONIFIED, True)
+            glfw.glfwWindowHint(GLFW_FLOATING, False)
 
             glfw.glfwSetKeyCallback(self.__window, on_key)
             glfw.glfwSetWindowCloseCallback(self.__window, on_close)
