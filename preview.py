@@ -363,7 +363,7 @@ class PreviewWindow:
             nonlocal frame_index
 
             # Respond only to key press
-            if action != glfw.GLFW_PRESS:
+            if action == glfw.GLFW_RELEASE:
                 return
 
             if key == glfw.GLFW_KEY_LEFT and frame_index > 0:
