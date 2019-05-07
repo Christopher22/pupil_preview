@@ -368,10 +368,10 @@ class PreviewWindow:
 
             if key == glfw.GLFW_KEY_LEFT and frame_index > 0:
                 frame_index -= 1
-                PreviewWindow._draw_frame(window, self.path, frames, frame_index)
+                PreviewWindow._draw_frame(window, self.path, frames, frame_index, False)
             elif key == glfw.GLFW_KEY_RIGHT and frame_index < len(frames) - 1:
                 frame_index += 1
-                PreviewWindow._draw_frame(window, self.path, frames, frame_index)
+                PreviewWindow._draw_frame(window, self.path, frames, frame_index, False)
 
         def on_close(_window):
             self.parent.notify_all({"subject": Preview.NOTIFICATION_PREVIEW_CLOSE})
@@ -402,7 +402,7 @@ class PreviewWindow:
             basic_gl_setup()
             glfw.glfwSwapInterval(0)
 
-        PreviewWindow._draw_frame(self.__window, self.path, frames, 0)
+        PreviewWindow._draw_frame(self.__window, self.path, frames, 0, True)
 
     def close(self):
         if self.__window is None:
@@ -413,7 +413,7 @@ class PreviewWindow:
             self.__window = None
 
     @staticmethod
-    def _draw_frame(window, path, frames, index):
+    def _draw_frame(window, path, frames, index: int, show_help: bool):
         frames_data = [frame.load(path) for frame in frames[index]]
 
         for frame, frame_meta in zip(frames_data, frames[index]):
@@ -422,15 +422,24 @@ class PreviewWindow:
                 "Preview {}/{} (eye{})".format(
                     index + 1, len(frames), frame_meta.eye_id
                 ),
-                (20, frame.shape[0] - 60),
+                (15, frame.shape[0] - 60),
             )
             PreviewWindow._draw_text(
                 frame,
                 "Confidence: {}".format(frame_meta.confidence),
-                (20, frame.shape[0] - 30),
+                (15, frame.shape[0] - 30),
             )
 
         frame = frames_data[0] if len(frames_data) == 1 else np.hstack(frames_data)
+
+        # Present usage hints of first load
+        if show_help:
+            PreviewWindow._draw_text(
+                frame,
+                "Usage: Use the arrow keys for navigating between frames.",
+                (15, 40),
+            )
+
         with PreviewWindow.WindowContextManager(window):
             clear_gl_screen()
             make_coord_system_norm_based()
