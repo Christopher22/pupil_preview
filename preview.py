@@ -145,10 +145,11 @@ class PreviewGenerator:
             A tiny wrapper for the layout constrained by the detector.
             """
 
-            def __init__(self, image: np.ndarray):
+            def __init__(self, image: np.ndarray, color: np.ndarray = None):
                 self.width = image.shape[1]
                 self.height = image.shape[0]
                 self.gray = image
+                self.img = color
                 self.timestamp = 0
 
         def __init__(
@@ -216,27 +217,28 @@ class PreviewGenerator:
                     # Extract the pupil
                     pupil_2d = self.__detector.detect(
                         frame_=PreviewGenerator.ImageStream.FrameWrapper(
-                            grayscale_frame
+                            grayscale_frame,
+                            color_frame
                         ),
                         user_roi=Roi(grayscale_frame.shape),
-                        visualize=False,
+                        visualize=True,
                     )
 
                     # Visualize the ellipse
-                    ellipse = pupil_2d["ellipse"]
-                    confidence = pupil_2d["confidence"]
-                    if confidence > 0.0:
-                        ellipse_points = get_ellipse_points(
-                            (ellipse["center"], ellipse["axes"], ellipse["angle"]),
-                            num_pts=50,
-                        )
-                        cv2.polylines(
-                            color_frame,
-                            [np.asarray(ellipse_points, dtype="i")],
-                            True,
-                            (0, 0, 255),
-                            thickness=2,
-                        )
+                    # ellipse = pupil_2d["ellipse"]
+                    #confidence = pupil_2d["confidence"]
+                    #if confidence > 0.0:
+                    #    ellipse_points = get_ellipse_points(
+                    #        (ellipse["center"], ellipse["axes"], ellipse["angle"]),
+                    #        num_pts=50,
+                    #    )
+                    #    cv2.polylines(
+                    #        color_frame,
+                    #        [np.asarray(ellipse_points, dtype="i")],
+                    #        True,
+                    #        (0, 0, 255),
+                    #        thickness=2,
+                    #    )
 
                     frame = PreviewFrame(
                         self.eye_id,
@@ -422,13 +424,13 @@ class PreviewWindow:
                 "Preview {}/{} (eye{})".format(
                     index + 1, len(frames), frame_meta.eye_id
                 ),
-                (15, frame.shape[0] - 60),
-            )
-            PreviewWindow._draw_text(
-                frame,
-                "Confidence: {}".format(frame_meta.confidence),
                 (15, frame.shape[0] - 30),
             )
+            #PreviewWindow._draw_text(
+            #    frame,
+            #    "Confidence: {}".format(frame_meta.confidence),
+            #    (15, frame.shape[0] - 30),
+            #)
 
         frame = frames_data[0] if len(frames_data) == 1 else np.hstack(frames_data)
 
