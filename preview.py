@@ -168,7 +168,7 @@ class PreviewGenerator:
             self.frame_format = frame_format
 
             self.__counter = 0
-            self.__detector = Detector_2D()
+            self.__detector = Detector_2D(settings={"pupil_size_min":40, "pupil_size_max":200, "coarse_detection":False})
 
             # Set custom parameter for the Detector2d, if given
             if len(detector_parameters) > 0:
