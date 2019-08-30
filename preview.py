@@ -16,7 +16,6 @@ from plugin import Plugin
 from methods import Roi
 from zmq_tools import Msg_Receiver
 from pupil_detectors import Detector_2D
-from vis_eye_video_overlay import get_ellipse_points
 from pyglui.cygl.utils import draw_gl_texture
 from gl_utils import clear_gl_screen, basic_gl_setup, make_coord_system_norm_based
 
@@ -168,7 +167,13 @@ class PreviewGenerator:
             self.frame_format = frame_format
 
             self.__counter = 0
-            self.__detector = Detector_2D(settings={"pupil_size_min":40, "pupil_size_max":200, "coarse_detection":False})
+            self.__detector = Detector_2D(
+                settings={
+                    "pupil_size_min": 40,
+                    "pupil_size_max": 200,
+                    "coarse_detection": False,
+                }
+            )
 
             # Set custom parameter for the Detector2d, if given
             if len(detector_parameters) > 0:
@@ -217,28 +222,11 @@ class PreviewGenerator:
                     # Extract the pupil
                     pupil_2d = self.__detector.detect(
                         frame_=PreviewGenerator.ImageStream.FrameWrapper(
-                            grayscale_frame,
-                            color_frame
+                            grayscale_frame, color_frame
                         ),
                         user_roi=Roi(grayscale_frame.shape),
                         visualize=True,
                     )
-
-                    # Visualize the ellipse
-                    # ellipse = pupil_2d["ellipse"]
-                    #confidence = pupil_2d["confidence"]
-                    #if confidence > 0.0:
-                    #    ellipse_points = get_ellipse_points(
-                    #        (ellipse["center"], ellipse["axes"], ellipse["angle"]),
-                    #        num_pts=50,
-                    #    )
-                    #    cv2.polylines(
-                    #        color_frame,
-                    #        [np.asarray(ellipse_points, dtype="i")],
-                    #        True,
-                    #        (0, 0, 255),
-                    #        thickness=2,
-                    #    )
 
                     frame = PreviewFrame(
                         self.eye_id,
@@ -426,11 +414,6 @@ class PreviewWindow:
                 ),
                 (15, frame.shape[0] - 30),
             )
-            #PreviewWindow._draw_text(
-            #    frame,
-            #    "Confidence: {}".format(frame_meta.confidence),
-            #    (15, frame.shape[0] - 30),
-            #)
 
         frame = frames_data[0] if len(frames_data) == 1 else np.hstack(frames_data)
 
